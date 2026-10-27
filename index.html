@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>お絵かきカードバトル</title>
+<style>
+:root{--bg:#fff8ec;--fg:#2b2320;--card:#fff;--line:#e4d6bf;--ac:#e8590c;--mut:#7a6a5a;--hp:#2f9e44;--bad:#c92a2a;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1c1815;--fg:#f4ece2;--card:#2a2420;--line:#42382f;--ac:#ff8f4a;--mut:#b7a794;--hp:#69db7c;--bad:#ff8787;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#1c1815;--fg:#f4ece2;--card:#2a2420;--line:#42382f;--ac:#ff8f4a;--mut:#b7a794;--hp:#69db7c;--bad:#ff8787;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 "Hiragino Sans","Noto Sans JP",system-ui,sans-serif}
+main{max-width:760px;margin:0 auto;padding:14px}
+h1{font-size:1.4rem;margin:.2em 0}h2{font-size:1.05rem;margin:1em 0 .4em}
+button,input{font:inherit;color:inherit}
+button{background:var(--card);border:2px solid var(--line);border-radius:10px;padding:8px 12px;cursor:pointer}
+button.on{border-color:var(--ac);background:color-mix(in srgb,var(--ac) 15%,var(--card))}
+button:disabled{opacity:.4;cursor:not-allowed}
+button.pri{background:var(--ac);color:#fff;border-color:var(--ac);font-weight:700}
+input{background:var(--card);border:2px solid var(--line);border-radius:10px;padding:8px 10px;width:100%}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.box{background:var(--card);border:2px solid var(--line);border-radius:14px;padding:10px;margin:8px 0}
+.mut{color:var(--mut);font-size:.85rem}
+#cv{width:100%;max-width:360px;aspect-ratio:1;border:3px solid var(--line);border-radius:12px;touch-action:none;display:block;background:#c9d3dc}
+.pen{width:34px;height:34px;border-radius:50%;border:3px solid var(--line);padding:0}
+.pen.on{border-color:var(--ac);transform:scale(1.15)}
+.slot{width:88px;height:88px;padding:2px;overflow:hidden}
+.slot img{width:100%;height:100%;object-fit:cover;border-radius:8px}
+.ci{display:flex;gap:10px}.ci img{width:96px;height:96px;object-fit:cover;border-radius:10px;border:2px solid var(--line)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
+.pl.dead{opacity:.35;filter:grayscale(1)}
+.pl img{width:100%;max-width:120px;aspect-ratio:1;object-fit:cover;border-radius:10px}
+.bar{height:10px;background:var(--line);border-radius:6px;overflow:hidden}.bar i{display:block;height:100%;background:var(--hp)}
+.dots span{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--hp);margin-right:3px}.dots span.x{background:var(--line)}
+#toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:8px 14px;border-radius:20px;opacity:0;transition:.3s;pointer-events:none;max-width:90%}
+#toast.s{opacity:1}
+</style></head><body><main>
+<h1>🎨 お絵かきカードバトル</h1>
+<p id="err" class="box" hidden>この画面ではオンライン機能（共有データ）が使えません。公開ページとして開いてサインインした状態で試してね。</p>
+<section id="lobby" hidden>
+ <div class="box"><p class="mut">3枚の絵を描くと、色と線の形からカードが決まるよ。最も多い色が属性（赤=火・青=水・緑=草）、2番目の色が特殊技。ギザギザだと攻撃型、なめらかだとHP型。輪っかを描くと回復、直線が多いと頑丈…と、狙って作ろう。2〜4人で最後の1人を目指そう。</p>
+ <input id="nm" placeholder="あなたの名前" maxlength="10">
+ <div class="row" style="margin-top:8px"><button class="pri" onclick="create()">部屋を作る</button></div>
+ <div class="row" style="margin-top:8px"><input id="jc" placeholder="部屋コード" maxlength="4" style="width:130px;text-transform:uppercase"><button onclick="join()">入る</button></div></div>
+</section>
+<section id="room" hidden>
+ <div class="box">部屋コード <b id="code" style="font-size:1.4rem;letter-spacing:.1em"></b> <span class="mut">友達にこのコードを伝えてね</span></div>
+ <h2>カードを描こう（描く時間は無制限）</h2>
+ <div id="slots" class="row"></div>
+ <p class="mut" style="margin:.5em 0">いま描くカード：<b id="curn"></b></p>
+ <canvas id="cv"></canvas>
+ <div class="row" style="margin:8px 0"><span id="pens" class="row"></span><button onclick="undo()">戻す</button><button onclick="clr()">消す</button></div>
+ <button class="pri" id="jb" onclick="judge()">この絵でカード化！</button>
+ <div id="cinfo"></div>
+ <h2>参加者</h2><div id="plist"></div><div id="startbox"></div>
+</section>
+<section id="battle" hidden></section>
+</main><div id="toast"></div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const EL={fire:'🔥火',water:'💧水',grass:'🌿草'},SP={poison:'毒',burn:'やけど',paralyze:'麻痺',sleep:'眠り',weak:'弱体化'},TR={regen:'毎ターン回復',first:'先制',reflect:'反射',sturdy:'頑丈',rage:'背水',immune:'状態異常無効'};
+const BEATS={fire:'grass',grass:'water',water:'fire'};
+const mult=(a,d)=>BEATS[a]===d?1.5:BEATS[d]===a?0.5:1;
+let db,sample,uid,code,G=null,PL={},PK={},myCards=[null,null,null],cur=0,loaded=false,busy=false,sel={},selTurn=-1,resolving=false,lastRes=-1;
+let toastT;function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('s');clearTimeout(toastT);toastT=setTimeout(()=>e.classList.remove('s'),2800)}
+const nm=()=>{const v=$('#nm').value.trim();if(!v){toast('名前を入れてね');return ''}try{localStorage.setItem('dcname',v)}catch(e){}return v};
+const safeImg=s=>typeof s==='string'&&s.startsWith('data:image/jpeg')?s:'';
+
+let ws,pingT,off=0;
+try{uid=sessionStorage.getItem('dcuid')}catch(e){}
+if(!uid){uid='u'+Math.random().toString(36).slice(2,10);try{sessionStorage.setItem('dcuid',uid)}catch(e){}}
+try{$('#nm').value=localStorage.getItem('dcname')||''}catch(e){}
+$('#lobby').hidden=false;
+const nm0=()=>$('#nm').value.trim()||'名無し';
+const send=o=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify(o))};
+function conn(){return new Promise((ok,ng)=>{const u=(location.protocol==='https:'?'wss://':'ws://')+location.host;ws=new WebSocket(u);
+ ws.onopen=()=>{clearInterval(pingT);pingT=setInterval(()=>send({t:'ping'}),25000);ok()};
+ ws.onerror=()=>ng();
+ ws.onmessage=e=>{let d;try{d=JSON.parse(e.data)}catch(x){return}onMsg(d)};
+ ws.onclose=()=>{clearInterval(pingT);if(code)reconn()}})}
+function reconn(){toast('接続が切れました。再接続中…');setTimeout(()=>conn().then(()=>send({t:'join',code,uid,name:nm0()})).catch(reconn),2500)}
+function onMsg(d){if(d.now)off=d.now-Date.now();
+ if(d.t==='err'){toast(d.m);if(d.gone&&code)setTimeout(()=>location.reload(),2500);return}
+ if(d.t==='room'){if(!code)enter(d.code);G=d.G;PL=d.PL;PK=d.picked||{};
+  if(!loaded){loaded=true;((PL[uid]&&PL[uid].cards)||[]).slice(0,3).forEach((x,i)=>myCards[i]=x)}render()}
+ else if(d.t==='g'){G=d.G;PK={};render()}
+ else if(d.t==='picked'){PK=d.picked;render()}}
+
+async function create(){const n=nm();if(!n)return;toast('サーバーに接続中…（初回は1分ほどかかることがあります）');
+ try{if(!ws||ws.readyState!==1)await conn();send({t:'create',uid,name:n})}catch(e){toast('サーバーにつながりません。少し待ってからもう一度試してね')}}
+async function join(){const n=nm();if(!n)return;const c=$('#jc').value.trim().toUpperCase();if(c.length!==4)return toast('4文字のコードを入れてね');
+ try{if(!ws||ws.readyState!==1)await conn();send({t:'join',code:c,uid,name:n})}catch(e){toast('サーバーにつながりません。少し待ってからもう一度試してね')}}
+function enter(c){code=c;$('#lobby').hidden=true;$('#room').hidden=false;$('#code').textContent=c}
+function savePlayer(){send({t:'cards',name:nm0(),cards:myCards.filter(Boolean)})}
+
+/* ---------- drawing ---------- */
+const cv=$('#cv'),cx=cv.getContext('2d');cv.width=cv.height=360;
+let pen='#111111',down=false,hist=[],strokes=[];
+function clr(){hist.push({im:cx.getImageData(0,0,360,360),st:strokes.slice()});strokes=[];cx.fillStyle='#c9d3dc';cx.fillRect(0,0,360,360)}
+function undo(){const h=hist.pop();if(h){cx.putImageData(h.im,0,0);strokes=h.st}}
+cx.fillStyle='#c9d3dc';cx.fillRect(0,0,360,360);
+$('#pens').innerHTML=['#111111','#ffffff','#e03131','#1971c2','#2f9e44'].map(c=>`<button class="pen${c===pen?' on':''}" style="background:${c}" onclick="setPen('${c}',this)" aria-label="ペン"></button>`).join('');
+function setPen(c,b){pen=c;document.querySelectorAll('.pen').forEach(x=>x.classList.toggle('on',x===b))}
+const pos=e=>{const r=cv.getBoundingClientRect();return[(e.clientX-r.left)*360/r.width,(e.clientY-r.top)*360/r.height]};
+cv.addEventListener('pointerdown',e=>{down=true;cv.setPointerCapture(e.pointerId);hist.push({im:cx.getImageData(0,0,360,360),st:strokes.slice()});if(hist.length>15)hist.shift();strokes.push({c:pen,p:[]});
+ cx.strokeStyle=pen;cx.lineWidth=6;cx.lineCap=cx.lineJoin='round';const[x,y]=pos(e);cx.beginPath();cx.moveTo(x,y);cx.lineTo(x+.1,y);cx.stroke();strokes[strokes.length-1].p.push([x,y])});
+cv.addEventListener('pointermove',e=>{if(!down)return;const[x,y]=pos(e);cx.lineTo(x,y);cx.stroke();strokes[strokes.length-1].p.push([x,y])});
+['pointerup','pointercancel'].forEach(t=>cv.addEventListener(t,()=>down=false));
+
+/* ---------- AI judge ---------- */
+const PROMPT='添付は、プレイヤーが描いた絵です。この絵からカードバトルのキャラを作ってください。説明やコードブロックなしで、JSONだけを返します。キーと値：name(キャラ名,10字以内,絵の見た目から), element(fire|water|grass のどれか,絵の雰囲気に合わせる), h(1〜6の整数,体力の高さ), p(1〜6の整数,攻撃力の高さ), move(技名), sp(poison|burn|paralyze|sleep|weak から1つ), spName(特殊技の名前), trait(regen|first|reflect|sturdy|rage|immune から1つ), traitName(特性の名前), desc(40字以内の一言説明)。h と p の合計は8以内。強そうな絵でも合計は増やさず、偏らせて個性を出すこと。絵がほぼ空白なら弱いキャラにすること。';
+function norm(r){const pk=(v,o,d)=>Object.keys(o).includes(v)?v:d;let h=Math.min(6,Math.max(1,(r.h|0)||1)),p=Math.min(6,Math.max(1,(r.p|0)||1));while(h+p>8){h>p?h--:p--}
+ const s=(v,d,n)=>String(v||d).slice(0,n);
+ return{name:s(r.name,'名無し',12),el:pk(r.element,EL,'grass'),maxhp:30+h*12,power:6+p*3,move:s(r.move,'たいあたり',12),sp:pk(r.sp,SP,'weak'),spName:s(r.spName,'ふしぎな技',12),trait:pk(r.trait,TR,'regen'),traitName:s(r.traitName,'ふしぎな力',12),desc:s(r.desc,'',60)}}
+const PICK=(a,n)=>a[n%a.length];
+const COL={'#111111':'黒','#ffffff':'白','#e03131':'赤','#1971c2':'青','#2f9e44':'緑'};
+const SPN={poison:'どくのしずく',burn:'あつあつビーム',paralyze:'しびれびりびり',sleep:'ねむねむうた',weak:'へなへなこうせん'};
+const TRN={regen:'じこさいせい',first:'はやおき',reflect:'はねかえしボディ',sturdy:'ふんばり',rage:'ピンチでパワー',immune:'ふしみ'};
+const MV={fire:['ひのこアタック','ほのおのつめ'],water:['みずでっぽう','なみのたいあたり'],grass:['つるのムチ','はっぱカッター']};
+const PRE={fire:['あかい','もえる','あつい'],water:['あおい','しずかな','つめたい'],grass:['みどりの','ふわふわの','のびる']};
+async function judge(){if(busy)return;
+ const total=strokes.reduce((s,k)=>s+k.p.length,0);if(strokes.length<1||total<8)return toast('もう少し描いてね');
+ busy=true;const cc={'#111111':0,'#ffffff':0,'#e03131':0,'#1971c2':0,'#2f9e44':0};
+ let turns=0,sharp=0,smooth=0,loops=0,straight=0;
+ for(const k of strokes){const q=[];for(const p of k.p){const l=q[q.length-1];if(!l||Math.hypot(p[0]-l[0],p[1]-l[1])>=6)q.push(p)}
+  let L=0;for(let i=1;i<q.length;i++)L+=Math.hypot(q[i][0]-q[i-1][0],q[i][1]-q[i-1][1]);
+  cc[k.c]+=L||1;
+  for(let i=2;i<q.length;i++){const a1=Math.atan2(q[i-1][1]-q[i-2][1],q[i-1][0]-q[i-2][0]),a2=Math.atan2(q[i][1]-q[i-1][1],q[i][0]-q[i-1][0]);
+   let d=Math.abs(a2-a1);if(d>Math.PI)d=2*Math.PI-d;d=d*180/Math.PI;turns++;if(d>60)sharp++;else if(d>8)smooth++}
+  if(q.length>2){const e=Math.hypot(q[q.length-1][0]-q[0][0],q[q.length-1][1]-q[0][1]);
+   if(L>80&&e<25)loops++;else if(L>60&&e/L>.9)straight++}}
+ const sf=turns?sharp/turns:0,mf=turns?smooth/turns:0;
+ const three=['#e03131','#1971c2','#2f9e44'],eln={'#e03131':'fire','#1971c2':'water','#2f9e44':'grass'};
+ let top=three.slice().sort((a,b)=>cc[b]-cc[a])[0],el;
+ if(cc[top]>0)el=eln[top];else el=cc['#111111']>cc['#ffffff']?'fire':cc['#ffffff']>0?'water':'grass';
+ const spm={'#e03131':'burn','#1971c2':'sleep','#2f9e44':'poison','#111111':'paralyze','#ffffff':'weak'};
+ const second=Object.keys(cc).filter(c=>cc[c]>0&&!(cc[top]>0&&c===top)).sort((a,b)=>cc[b]-cc[a])[0];
+ const sp=second?spm[second]:{fire:'burn',water:'sleep',grass:'poison'}[el];
+ const trait=loops>0?'regen':straight>=2?'sturdy':sf>.35?'reflect':strokes.length>=8?'rage':strokes.length<=3?'first':'immune';
+ const p=Math.min(6,Math.max(1,Math.round(4+(sf-mf)*3))),h=Math.min(6,8-p);
+ const body=sf>.3?['トゲトゲ','キバ','ツノ']:mf>.5?['まるまる','ふわふわ','ぷにぷに']:['ぐにゃぐにゃ','もじゃもじゃ','ゴロゴロ'];
+ const n=Math.round(total);
+ const c=norm({h,p,element:el,sp,trait,name:PICK(PRE[el],n)+PICK(body,n>>2),move:PICK(MV[el],n),spName:SPN[sp],traitName:TRN[trait],
+  desc:`ギザギザ${Math.round(sf*100)}％・なめらか${Math.round(mf*100)}％・線${strokes.length}本・特殊色${second?COL[second]:'なし'}`});
+ const t=document.createElement('canvas');t.width=t.height=160;t.getContext('2d').drawImage(cv,0,0,160,160);c.img=t.toDataURL('image/jpeg',.6);
+ myCards[cur]=c;await savePlayer();clr();toast('カード完成！');busy=false;render()}
+function pickSlot(i){cur=i;render()}
+const cardHTML=c=>`<div class="box ci"><img src="${safeImg(c.img)}" alt=""><div><b>${esc(c.name)}</b> ${EL[c.el]||''}<br>HP ${esc(c.maxhp)} / 攻撃 ${esc(c.power)}<br>技：${esc(c.move)}<br>特殊技：${esc(c.spName)}（${SP[c.sp]||''}）<br>特性：${esc(c.traitName)}（${TR[c.trait]||''}）<br><span class="mut">${esc(c.desc)}</span></div></div>`;
+
+/* ---------- lobby ---------- */
+function render(){if(!G)return;if(G.phase==='lobby'){$('#battle').hidden=true;$('#room').hidden=false;renderRoom()}else{$('#room').hidden=true;renderBattle()}}
+function renderRoom(){
+ $('#slots').innerHTML=[0,1,2].map(i=>`<button class="slot${i===cur?' on':''}" onclick="pickSlot(${i})">${myCards[i]?`<img src="${safeImg(myCards[i].img)}" alt="">`:`カード${i+1}<br>未作成`}</button>`).join('');
+ $('#curn').textContent='カード'+(cur+1);
+ $('#cinfo').innerHTML=myCards[cur]?cardHTML(myCards[cur]):'';
+ const ids=Object.keys(PL);
+ $('#plist').innerHTML=ids.map(u=>{const n=(PL[u].cards||[]).length;return`<div class="box row"><b>${esc(PL[u].name)}${u===uid?'（あなた）':''}</b><span class="mut">${n===3?'✅ 準備OK':'カード '+n+'/3'}</span></div>`}).join('');
+ const ready=ids.filter(u=>(PL[u].cards||[]).length===3);
+ $('#startbox').innerHTML=G.host===uid?`<button class="pri" ${ready.length>=2?'':'disabled'} onclick="start()">ゲーム開始（${ready.length}人）</button><p class="mut">準備OKの人でバトルします（最大4人）。</p>`:'<p class="mut">ホストが開始するまで待ってね。</p>'}
+function start(){send({t:'start'})}
+
+/* ---------- battle ---------- */
+const alive=g=>g.order.filter(u=>g.P[u].alive);
+function tick(){if(!G||G.phase!=='battle')return;const t=$('#tm');if(t)t.textContent=Math.max(0,30-Math.floor((Date.now()+off-G.turnStart)/1000))}
+setInterval(tick,1000);
+const setCard=i=>{sel.card=i;if(sel.act==='sp'&&G.P[uid].cards[i].cd)sel.act='atk';renderBattle()};
+const setAct=a=>{sel.act=a;renderBattle()};
+const setTarget=u=>{sel.target=u;renderBattle()};
+function submit(){send({t:'pick',card:sel.card,act:sel.act,target:sel.target});toast('選択しました（変更もできるよ）')}
+function renderBattle(){const el=$('#battle');el.hidden=false;const me=G.P[uid];
+ const others=me?alive(G).filter(u=>u!==uid):[];
+ if(me&&selTurn!==G.turn){sel={card:me.active,act:'atk',target:null};selTurn=G.turn}
+ if(me&&(!others.includes(sel.target)))sel.target=others[0]||null;
+ let h=`<div class="box row"><b>ターン ${G.turn}</b><span class="mut">残り <b id="tm">30</b> 秒（全員が選ぶと進行）</span></div><div class="grid">`;
+ h+=G.order.map(u=>{const P=G.P[u],c=P.cards[P.active],img=safeImg(PL[u]&&PL[u].cards&&PL[u].cards[P.active]&&PL[u].cards[P.active].img);
+  return`<div class="box pl${P.alive?'':' dead'}"><b>${esc(P.name)}${u===uid?'（あなた）':''}</b> ${PK[u]&&PK[u].turn===G.turn&&G.phase==='battle'?'✔':''}<br><img src="${img}" alt=""><br><b>${esc(c.name)}</b> ${EL[c.el]||''}<div class="bar"><i style="width:${Math.round(c.hp/c.maxhp*100)}%"></i></div><span class="mut">HP ${c.hp}/${c.maxhp}${c.st?' ・'+SP[c.st.k]:''}<br>特性：${esc(c.traitName)}</span><div class="dots">${P.cards.map(k=>`<span class="${k.hp>0?'':'x'}"></span>`).join('')}</div></div>`}).join('')+'</div>';
+ if(G.phase==='over'){const w=G.winner&&G.P[G.winner];h+=`<div class="box"><h2>🏆 ${w?esc(w.name)+'の勝利！':'引き分け'}</h2><button class="pri" onclick="location.reload()">最初に戻る</button></div>`}
+ else if(me&&me.alive){const mc=me.cards[sel.card];
+  h+=`<div class="box"><b>あなたの番：場に出すカード</b><div class="row" style="margin:6px 0">${me.cards.map((c,i)=>`<button class="${i===sel.card?'on':''}" ${c.hp>0?'':'disabled'} onclick="setCard(${i})">${esc(c.name)}（${c.hp}）</button>`).join('')}</div>
+  <b>行動</b><div class="row" style="margin:6px 0"><button class="${sel.act==='atk'?'on':''}" onclick="setAct('atk')">技：${esc(mc.move)}</button><button class="${sel.act==='sp'?'on':''}" ${mc.cd?'disabled':''} onclick="setAct('sp')">特殊技：${esc(mc.spName)}${mc.cd?'（連続不可）':''}</button></div>
+  <b>ターゲット</b><div class="row" style="margin:6px 0">${others.map(u=>`<button class="${u===sel.target?'on':''}" onclick="setTarget('${esc(u)}')">${esc(G.P[u].name)}</button>`).join('')}</div>
+  <button class="pri" onclick="submit()">これで決定</button></div>`}
+ else h+='<div class="box mut">観戦中です。</div>';
+ h+=`<div class="box"><b>前のターンの結果</b>${(G.log||[]).map(l=>`<div class="mut">・${esc(l)}</div>`).join('')}</div>`;
+ el.innerHTML=h}
+</script></body></html>
